@@ -1,0 +1,76 @@
+# Makefile and build files
+Makefile
+Makefile.old
+Build
+build/
+build-*/
+dist/
+*.o
+*.a
+*.so
+
+# Phone import / image pipeline outputs
+# (These are large, generated, and reproducible.)
+runs/
+**/_logs/
+**/originals/
+**/working/
+**/time_sorted/
+**/date_tree/
+**/resized/
+**/redacted/
+
+# Generated PDFs and related artifacts
+# Uncomment the next line if you never want PDFs tracked at all:
+# *.pdf
+*_small.pdf
+*_screen.pdf
+*_ebook.pdf
+*_printer.pdf
+
+# EXIF / autorotate logs
+*exif*.tsv
+*exif*.csv
+*autorot*.log
+
+# Image editor and thumbnail cruft
+*.xcf
+*.psd
+*.kra
+*~.png
+*~.jpg
+Thumbs.db
+
+# OS cruft
+.DS_Store
+.DS_Store?
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# Editor backups / temp files
+*~
+*.swp
+*.swo
+*.tmp
+*.bak
+
+# Python cache and venvs (if you add helper scripts later)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Node / JS (just in case you add a small frontend or tooling)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Logs and temp
+*.log
+tmp/
+temp/
+.cache/
