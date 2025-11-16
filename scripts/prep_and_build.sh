@@ -19,8 +19,9 @@ set -euo pipefail
 # Assumptions:
 #   - scripts/phone_import.sh exists and is executable
 #   - scripts/mov_exif.sh exists and is executable
-#   - build_any.sh (or build_any_v2.sh) lives at repo root and
-#     is callable as: ./build_any.sh <project> <doc_num>
+#   - build_any.sh (or build_any_v2.sh) is available inside scripts/ and
+#     is callable as:
+#       ./build_any.sh <project> <doc_num>
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -28,8 +29,29 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PHONE_IMPORT="$SCRIPT_DIR/phone_import.sh"
 MOV_EXIF="$SCRIPT_DIR/mov_exif.sh"
 
-# Change this if you prefer build_any_v2.sh:
-BUILD_ANY="$REPO_ROOT/build_any.sh"
+find_build_any() {
+  local candidates=(
+    "$SCRIPT_DIR/build_any.sh"
+    "$SCRIPT_DIR/build_any_v2.sh"
+  )
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+if ! BUILD_ANY="$(find_build_any)"; then
+  cat >&2 <<'EOF'
+Error: Could not find an executable build_any.sh (or build_any_v2.sh).
+Expected to locate it inside the scripts/ directory.
+EOF
+  exit 1
+fi
 
 if [[ $# -lt 4 ]]; then
   cat >&2 <<EOF
