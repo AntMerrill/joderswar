@@ -91,7 +91,14 @@ echo "[prep_and_build] Updated symlink: runs/current -> $RUN_DIR"
 
 # 4) Call the finisher to build the PDF
 echo "[prep_and_build] Calling finisher: $BUILD_ANY $PROJECT $DOC_NUM"
-bash "$BUILD_ANY" "$PROJECT" "$DOC_NUM"
+BUILD_OUTPUT_DIR="$RUN_DIR" bash "$BUILD_ANY" "$PROJECT" "$DOC_NUM"
+
+PDF_MAIN="$RUN_DIR/$DOC_NUM.pdf"
+if [[ -f "$PDF_MAIN" ]]; then
+  echo "[prep_and_build] PDF available at: $PDF_MAIN"
+else
+  echo "[prep_and_build] Warning: Expected PDF $PDF_MAIN was not created" >&2
+fi
 
 echo
 echo "=========================================================="
@@ -101,4 +108,5 @@ echo "  Stable run symlink: $REPO_ROOT/runs/current"
 echo "  JPGs:               $RUN_DIR/time_sorted, $RUN_DIR/resized"
 echo "  MOV metadata:       $RUN_DIR/_logs/video_summary.tsv"
 echo "  PDF built via:      $BUILD_ANY $PROJECT $DOC_NUM"
+echo "  PDF output:         $PDF_MAIN"
 echo "=========================================================="
