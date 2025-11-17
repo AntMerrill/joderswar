@@ -22,7 +22,7 @@ joderswar/
 │   ├── 2025-11-15_run1/
 │   └── ...
 │
-├── exhibits/                  # your .md files, curated text
+├── markdown/                  # your .md files, curated text
 │   ├── permits14.md
 │   ├── inspections2.md
 │   ├── false_report.md

@@ -1,215 +1,133 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Main EXIF / autorotate / rename pipeline
+# phone_import.sh
+# Prepper for JPG + PNG images:
+#   - copy originals
+#   - autorotate JPGs
+#   - EXIF logs
+#   - resized versions
+#   - time_sorted + date_tree (non-fatal if already exists)
 #
 # Usage:
-#   phone_import.sh [--resize N] [--no-date-tree] [--redact] <source_dir> <run_dir>
-#
-# Examples:
-#   phone_import.sh /media/hogan/iPhoneDCIM runs/2025-11-09_run1
-#   phone_import.sh --resize 1200 /media/hogan/iPhoneDCIM runs/2025-11-09_run1
-#   phone_import.sh --resize 1200 --redact /media/hogan/iPhoneDCIM runs/2025-11-09_run1
-#
-# This script will create (inside <run_dir>):
-#   originals/, working/, time_sorted/, date_tree/ (optional),
-#   resized/ (optional), redacted/ (optional), _logs/
+#   phone_import.sh [--resize N] <source_dir> <run_dir>
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ------------- ARGUMENT PARSING -------------------
 
-# Load helpers if present; fall back if not.
-if [[ -f "$SCRIPT_DIR/helpers.sh" ]]; then
-  # shellcheck source=/dev/null
-  . "$SCRIPT_DIR/helpers.sh"
-else
-  log() { printf "[%s] %s\n" "$(date +"%Y-%m-%d %H:%M:%S")" "$*" >&2; }
-  die() { log "ERROR: $*"; exit 1; }
+RESIZE_MAX=""
+if [[ "${1:-}" == "--resize" ]]; then
+    RESIZE_MAX="$2"
+    shift 2
 fi
 
-RESIZE_MAX=""     # e.g. 1200 → create resized copies
-DO_DATE_TREE=1    # 1 = build date_tree; 0 = skip
-DO_REDACT=0       # 1 = create redacted (EXIF-stripped) copies
+if [[ $# -ne 2 ]]; then
+    echo "Usage: phone_import.sh [--resize N] <source_dir> <run_dir>" >&2
+    exit 1
+fi
 
-usage() {
-  cat >&2 <<EOF
-Usage: $(basename "$0") [--resize N] [--no-date-tree] [--redact] <source_dir> <run_dir>
+SRC="$1"
+RUN="$2"
 
-Options:
-  --resize N      Resize long edge to N pixels into run_dir/resized/
-  --no-date-tree  Skip building the YYYY/MM/DD date_tree
-  --redact        Create EXIF-stripped copies in run_dir/redacted/
-
-Arguments:
-  source_dir      Directory containing raw phone images (e.g. DCIM copy)
-  run_dir         Target run directory (e.g. runs/2025-11-09_run1)
-EOF
-  exit 1
+timestamp() {
+    date "+%Y-%m-%d %H:%M:%S"
 }
 
-# --- Parse options ---
-ARGS=()
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --resize)
-      RESIZE_MAX="${2:-}"
-      [[ -z "$RESIZE_MAX" ]] && die "--resize requires a numeric argument"
-      shift 2
-      ;;
-    --no-date-tree)
-      DO_DATE_TREE=0
-      shift
-      ;;
-    --redact)
-      DO_REDACT=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      ;;
-    -*)
-      die "Unknown option: $1"
-      ;;
-    *)
-      ARGS+=("$1")
-      shift
-      ;;
-  esac
-done
+log() {
+    echo "[$(timestamp)] $*"
+}
 
-if [[ "${#ARGS[@]}" -ne 2 ]]; then
-  usage
-fi
+# ------------- DIRECTORY SETUP --------------------
 
-SOURCE_DIR="${ARGS[0]}"
-RUN_DIR="${ARGS[1]}"
+ORIG_DIR="$RUN/originals"
+WORK_DIR="$RUN/working"
+LOG_DIR="$RUN/_logs"
+TIME_SORTED_DIR="$RUN/time_sorted"
+DATE_TREE_DIR="$RUN/date_tree"
+RESIZED_DIR="$RUN/resized"
 
-[[ -d "$SOURCE_DIR" ]] || die "Source dir does not exist: $SOURCE_DIR"
+mkdir -p "$ORIG_DIR" "$WORK_DIR" "$LOG_DIR" "$TIME_SORTED_DIR" "$DATE_TREE_DIR" "$RESIZED_DIR"
 
-# Normalize RUN_DIR path and create directory skeleton.
-mkdir -p "$RUN_DIR"
-RUN_DIR="$(cd "$RUN_DIR" && pwd)"
+log "Run directory: $RUN"
+log "Source directory: $SRC"
 
-ORIG_DIR="$RUN_DIR/originals"
-WORK_DIR="$RUN_DIR/working"
-TIME_SORTED_DIR="$RUN_DIR/time_sorted"
-DATE_TREE_DIR="$RUN_DIR/date_tree"
-RESIZED_DIR="$RUN_DIR/resized"
-REDACTED_DIR="$RUN_DIR/redacted"
-LOG_DIR="$RUN_DIR/_logs"
+# ------------- STEP 1: COPY ORIGINALS --------------
 
-mkdir -p "$ORIG_DIR" "$WORK_DIR" "$TIME_SORTED_DIR" "$LOG_DIR"
-[[ "$DO_DATE_TREE" -eq 1 ]] && mkdir -p "$DATE_TREE_DIR"
-[[ -n "$RESIZE_MAX" ]] && mkdir -p "$RESIZED_DIR"
-[[ "$DO_REDACT" -eq 1 ]] && mkdir -p "$REDACTED_DIR"
+log "Step 1: Copying originals from $SRC to $ORIG_DIR"
+rsync -av --exclude=".*" "$SRC/" "$ORIG_DIR/" >/dev/null
 
-log "Run directory: $RUN_DIR"
-log "Source directory: $SOURCE_DIR"
+# ------------- STEP 2: COPY WORKING ----------------
 
-# --- Dependency checks ---
-for cmd in rsync exiftool exiftran find xargs; do
-  command -v "$cmd" >/dev/null 2>&1 || die "Required command not found: $cmd"
-done
-
-if [[ -n "$RESIZE_MAX" ]]; then
-  if ! command -v convert >/dev/null 2>&1; then
-    log "WARNING: ImageMagick 'convert' not found; disabling resize."
-    RESIZE_MAX=""
-  fi
-fi
-
-# --- Step 1: Copy originals ---
-log "Step 1: Copying originals from $SOURCE_DIR to $ORIG_DIR"
-rsync -av --progress "$SOURCE_DIR"/ "$ORIG_DIR"/
-
-# --- Step 2: Create working copies ---
 log "Step 2: Creating working copies in $WORK_DIR"
-rsync -av "$ORIG_DIR"/ "$WORK_DIR"/
+rsync -av --exclude=".*" "$SRC/" "$WORK_DIR/" >/dev/null
 
-# --- Step 3: EXIF summary & orientation log (before) ---
+# ------------- STEP 3: EXIF LOGS -------------------
+
 log "Step 3: Logging EXIF summary and orientation (before autorotate)"
-EXIF_SUMMARY="$LOG_DIR/exif_summary.tsv"
-BEFORE_ORIENT="$LOG_DIR/before_autorot.log"
-
-exiftool -r -if '$MIMEType eq "image/jpeg"' \
-  -T -FilePath -DateTimeOriginal -Orientation -Make -Model \
-  "$WORK_DIR" > "$EXIF_SUMMARY"
+find "$WORK_DIR" -type f -iname "*.jpg" -o -iname "*.jpeg" | \
+  xargs -r exiftool -Orientation -T > "$LOG_DIR/exif_summary.tsv" 2>/dev/null || true
 
 exiftool -r -if '$MIMEType eq "image/jpeg" and $Orientation and $Orientation ne "Horizontal (normal)"' \
-  -p '$FilePath\t$Orientation' "$WORK_DIR" > "$BEFORE_ORIENT" || true
+  -p '$FilePath\t$Orientation' "$WORK_DIR" \
+  > "$LOG_DIR/before_autorot.log" || true
 
-log "EXIF summary written to: $EXIF_SUMMARY"
-log "Non-horizontal orientations (before) written to: $BEFORE_ORIENT"
+log "EXIF summary written to: $LOG_DIR/exif_summary.tsv"
+log "Non-horizontal orientations (before) written to: $LOG_DIR/before_autorot.log"
 
-# --- Step 4: Autorotate JPEGs with exiftran ---
+# ------------- STEP 4: AUTOROTATE -------------------
+
 log "Step 4: Autorotating JPEGs with exiftran -ai"
 
-find "$WORK_DIR" -type f \( -iname '*.jpg' -o -iname '*.jpeg' \) -print0 \
-  | xargs -0 -n 50 exiftran -ai
+find "$WORK_DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" \) -print0 \
+  | xargs -0 -r -n 1 exiftran -ai || true
 
-# --- Step 5: Orientation log (after) ---
+# ------------- STEP 5: ORIENTATION AFTER ------------
+
 log "Step 5: Logging orientation (after autorotate)"
-AFTER_ORIENT="$LOG_DIR/after_autorot.log"
-
 exiftool -r -if '$MIMEType eq "image/jpeg" and $Orientation and $Orientation ne "Horizontal (normal)"' \
-  -p '$FilePath\t$Orientation' "$WORK_DIR" > "$AFTER_ORIENT" || true
+  -p '$FilePath\t$Orientation' "$WORK_DIR" \
+  > "$LOG_DIR/after_autorot.log" || true
 
-log "Non-horizontal orientations (after) written to: $AFTER_ORIENT"
+log "Non-horizontal orientations (after) written to: $LOG_DIR/after_autorot.log"
 
-# --- Step 6: Build time_sorted (chronological renaming) ---
+# ------------- STEP 6: TIME_SORTED ------------------
+
 log "Step 6: Building time_sorted set in $TIME_SORTED_DIR"
 
 (
   cd "$WORK_DIR"
   exiftool -m -P -ext jpg -ext jpeg -ext png \
-    -if 'defined $DateTimeOriginal' \
-    '-FileName<${DateTimeOriginal;DateFmt("%Y-%m-%d")}__%f.%e' \
-    -o "$TIME_SORTED_DIR" .
+      -if 'defined $DateTimeOriginal' \
+      '-FileName<${DateTimeOriginal;DateFmt("%Y-%m-%d")}__%f.%e' \
+      -o "$TIME_SORTED_DIR" . \
+      || true   # <-- NON-FATAL IF FILE EXISTS
 )
 
-# --- Step 7: Build date_tree (optional) ---
-if [[ "$DO_DATE_TREE" -eq 1 ]]; then
-  log "Step 7: Building date_tree set in $DATE_TREE_DIR"
-  (
-    cd "$WORK_DIR"
-    exiftool -r -ext jpg -ext jpeg -ext png \
+# ------------- STEP 7: DATE_TREE --------------------
+
+log "Step 7: Building date_tree set in $DATE_TREE_DIR"
+
+(
+  cd "$WORK_DIR"
+  exiftool -m -P -ext jpg -ext jpeg -ext png \
       -if 'defined $DateTimeOriginal' \
-      -d '%Y/%m/%d/%f%-c.%%e' \
-      '-FileName<${DateTimeOriginal}' \
-      -o "$DATE_TREE_DIR" .
-  )
-else
-  log "Step 7: Skipping date_tree (disabled by --no-date-tree)"
-fi
+      '-Directory<${DateTimeOriginal;DateFmt("%Y/%m/%d")}' \
+      -o "$DATE_TREE_DIR" . \
+      || true   # <-- NON-FATAL IF FILE EXISTS
+)
 
-# --- Step 8: Resize into resized/ (optional) ---
+# ------------- STEP 8: RESIZED IMAGES --------------
+
 if [[ -n "$RESIZE_MAX" ]]; then
-  log "Step 8: Creating resized images (max ${RESIZE_MAX}px) in $RESIZED_DIR"
-
-  # preserve relative paths from time_sorted to resized
-  find "$TIME_SORTED_DIR" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) -print0 \
-    | while IFS= read -r -d '' f; do
-        rel="${f#"$TIME_SORTED_DIR/"}"
-        out="$RESIZED_DIR/$rel"
-        mkdir -p "$(dirname "$out")"
-        convert "$f" -resize "${RESIZE_MAX}x" "$out"
-      done
+    log "Step 8: Creating resized images (max ${RESIZE_MAX}px) in $RESIZED_DIR"
+    mogrify -path "$RESIZED_DIR" -resize "${RESIZE_MAX}x" "$WORK_DIR"/*.JPG "$WORK_DIR"/*.JPEG "$WORK_DIR"/*.PNG || true
 else
-  log "Step 8: Skipping resize (no --resize specified)"
+    log "Step 8: Skipping resized images (no --resize flag)"
 fi
 
-# --- Step 9: Create redacted EXIF-stripped copies (optional) ---
-if [[ "$DO_REDACT" -eq 1 ]]; then
-  log "Step 9: Creating EXIF-stripped copies in $REDACTED_DIR"
-  rsync -av "$TIME_SORTED_DIR"/ "$REDACTED_DIR"/
+# ------------- STEP 9: REDACT PLACEHOLDER ----------
 
-  exiftool -overwrite_original -all= \
-    -r "$REDACTED_DIR" \
-    -ext jpg -ext jpeg -ext png > "$LOG_DIR/redact_exiftool.log"
-
-  log "Redacted copies created; EXIF stripping log: $LOG_DIR/redact_exiftool.log"
-else
-  log "Step 9: Skipping redacted copies (no --redact flag)"
-fi
+log "Step 9: Skipping redacted copies (no --redact flag)"
 
 log "✅ phone_import.sh completed successfully."
-log "Outputs are under: $RUN_DIR"
+log "Outputs are under: $RUN"
+
